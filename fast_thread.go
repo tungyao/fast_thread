@@ -2,6 +2,8 @@ package fast_thread
 
 import (
 	"context"
+	"log"
+	"sync"
 	"sync/atomic"
 )
 
@@ -14,6 +16,7 @@ type Thread struct {
 	ctx     context.Context
 	ready   bool
 	buffLen int
+	fix     int64
 }
 type work struct {
 	no     int
@@ -33,19 +36,25 @@ func NewThread(n int64, chanBuffLen int) *Thread {
 		t:       make([]*work, int(n)),
 		ctx:     context.Background(),
 		buffLen: chanBuffLen,
+		ready:   true,
 	}
 	if t.buffLen == 0 {
 		t.buffLen = 64
 	}
-	// init thread
+	sg := &sync.WaitGroup{}
+	sg.Add(int(n))
 	for i := 0; i < int(n); i++ {
-		go t.Work(i)
+		go t.Work(i, sg)
 	}
-	for {
-		if atomic.LoadInt64(&t.liveN) == n {
-			break
+	sg.Wait()
+	go func() {
+		for {
+			if atomic.LoadInt64(&t.liveN) == n {
+				log.Println(t.liveN, n)
+				break
+			}
 		}
-	}
+	}()
 	return t
 }
 
@@ -53,8 +62,57 @@ func (t *Thread) Wait() {
 	ctx, cancel := context.WithCancel(t.ctx)
 	t.cancel = cancel
 	<-ctx.Done()
+	t.ready = false
+	for i := 0; i < int(t.n); i++ {
+		close(t.t[i].queue)
+	}
+}
+
+func NewThreadFixation(n int64, chanBuffLen int, fixation int64) *Thread {
+	t := &Thread{
+		n:       n,
+		liveN:   0,
+		t:       make([]*work, int(n)),
+		ctx:     context.Background(),
+		buffLen: chanBuffLen,
+		fix:     0,
+		ready:   true,
+	}
+	if t.buffLen == 0 {
+		t.buffLen = 64
+	}
+	// init thread
+	sg := &sync.WaitGroup{}
+	sg.Add(int(n))
+	for i := 0; i < int(n); i++ {
+		go t.Work(i, sg)
+	}
+	sg.Wait()
+	go func(t *Thread) {
+		for {
+			if atomic.LoadInt64(&t.fix) == fixation {
+				t.Stop()
+				break
+			}
+		}
+	}(t)
+	return t
+}
+
+// WaitFixation 等待确定个数的执行完就立即终止
+func (t *Thread) WaitFixation() {
+	ctx, cancel := context.WithCancel(t.ctx)
+	t.cancel = cancel
+	<-ctx.Done()
+	t.ready = false
+	for i := 0; i < int(t.n); i++ {
+		close(t.t[i].queue)
+	}
 }
 func (t *Thread) AddWork(fnc func(ctx context.Context)) {
+	if t.ready == false {
+		return
+	}
 	m := atomic.LoadInt64(&t.t[0].status)
 	no := 0
 	for i, w := range t.t {
@@ -71,7 +129,7 @@ func (t *Thread) Stop() {
 	t.cancel()
 }
 
-func (t *Thread) Work(n int) {
+func (t *Thread) Work(n int, sg *sync.WaitGroup) {
 	w := &work{
 		no:    n,
 		queue: make(chan func(ctx context.Context), t.buffLen),
@@ -79,9 +137,11 @@ func (t *Thread) Work(n int) {
 	}
 	ctx := context.WithValue(w.ctx, "n", n)
 	t.t[n] = w
+	sg.Done()
 	atomic.AddInt64(&t.liveN, 1)
 	for v := range w.queue {
 		v(ctx)
 		atomic.AddInt64(&w.status, -1)
+		atomic.AddInt64(&t.fix, 1)
 	}
 }
