@@ -9,17 +9,21 @@ import (
 )
 
 func TestNewThreadFixation(t *testing.T) {
-	nt := NewThreadFixation(4, 64, 100)
+	nt := NewThreadFixation(4, 64, 300)
+	nt.SetRateLimit(2)
 	go func() {
-		for i := 0; i < 100; i++ {
+		for i := 0; i < 20; i++ {
 			ii := i
 			nt.AddWork(func(ctx context.Context) {
 				//log.Println(ii)
-				time.Sleep(time.Millisecond * time.Duration(rand.Intn(300)))
 				fmt.Println(ii, ctx.Value("n"))
 
 			})
 		}
+	}()
+	go func() {
+		time.Sleep(time.Second * 13)
+		nt.Stop()
 	}()
 	nt.WaitFixation()
 }
