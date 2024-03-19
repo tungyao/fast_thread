@@ -118,7 +118,9 @@ func (t *Thread) WaitFixation() {
 	for i := 0; i < int(t.n); i++ {
 		close(t.t[i].queue)
 	}
-	t.rateLimiter.Stop()
+	if t.rateLimiter != nil {
+		t.rateLimiter.Stop()
+	}
 }
 func (t *Thread) AddWork(fnc func(ctx context.Context)) {
 	if t.ready == false {
@@ -152,8 +154,9 @@ func (t *Thread) Work(n int, sg *sync.WaitGroup) {
 	atomic.AddInt64(&t.liveN, 1)
 
 	for v := range w.queue {
-		<-t.rateLimiter.C // 等待 rateLimiter 的信号
-
+		if t.rateLimiter != nil {
+			<-t.rateLimiter.C // 等待 rateLimiter 的信号
+		}
 		v(ctx)
 		atomic.AddInt64(&w.status, -1)
 		atomic.AddInt64(&t.fix, 1)
