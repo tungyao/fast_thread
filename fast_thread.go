@@ -19,6 +19,7 @@ type Thread struct {
 	buffLen     int
 	fix         int64
 	rateLimiter *time.Ticker // Rate limiter for controlling concurrency
+	fixReady    int64
 }
 
 type work struct {
@@ -77,16 +78,19 @@ func (t *Thread) Wait() {
 		close(t.t[i].queue)
 	}
 }
-
+func (t *Thread) SetFixation(i int64) {
+	atomic.StoreInt64(&t.fixReady, i)
+}
 func NewThreadFixation(n int64, chanBuffLen int, fixation int64) *Thread {
 	t := &Thread{
-		n:       n,
-		liveN:   0,
-		t:       make([]*work, int(n)),
-		ctx:     context.Background(),
-		buffLen: chanBuffLen,
-		fix:     0,
-		ready:   true,
+		n:        n,
+		liveN:    0,
+		t:        make([]*work, int(n)),
+		ctx:      context.Background(),
+		buffLen:  chanBuffLen,
+		fix:      0,
+		ready:    true,
+		fixReady: fixation,
 	}
 	if t.buffLen == 0 {
 		t.buffLen = 64
@@ -100,7 +104,7 @@ func NewThreadFixation(n int64, chanBuffLen int, fixation int64) *Thread {
 	sg.Wait()
 	go func(t *Thread) {
 		for {
-			if atomic.LoadInt64(&t.fix) == fixation {
+			if atomic.LoadInt64(&t.fix) == t.fixReady {
 				t.Stop()
 				break
 			}
